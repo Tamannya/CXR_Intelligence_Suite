@@ -57,7 +57,10 @@ FUNCTION_REGISTRY: list[dict[str, Any]] = [
         "section": "main",
         "description": "Instantiate the DenseNet121 classifier with the notebook's custom classification head.",
         "handler": "build_model_summary",
-        "params": [{"name": "num_classes", "type": "number", "required": False, "default": 14}],
+        "params": [
+            {"name": "num_classes", "type": "number", "required": False, "default": 14},
+            {"name": "device", "type": "dropdown", "required": False, "default": "auto", "options": ["auto", "cpu", "gpu"]},
+        ],
         "returns": ["text"],
     },
     {
@@ -72,6 +75,7 @@ FUNCTION_REGISTRY: list[dict[str, Any]] = [
             {"name": "epochs", "type": "number", "required": False, "default": 5},
             {"name": "lr", "type": "number", "required": False, "default": 0.0001},
             {"name": "batch_size", "type": "number", "required": False, "default": 32},
+            {"name": "device", "type": "dropdown", "required": False, "default": "auto", "options": ["auto", "cpu", "gpu"]},
         ],
         "returns": ["chart", "json"],
     },
@@ -84,6 +88,7 @@ FUNCTION_REGISTRY: list[dict[str, Any]] = [
         "params": [
             {"name": "image_dir", "type": "directory", "required": True},
             {"name": "threshold", "type": "number", "required": False, "default": 0.5},
+            {"name": "device", "type": "dropdown", "required": False, "default": "auto", "options": ["auto", "cpu", "gpu"]},
         ],
         "returns": ["table", "csv"],
     },

@@ -527,6 +527,22 @@ class NotebookService:
         self.state.set_runtime(key, loaded)
         return loaded
 
+    def _resolve_runtime_device(self, requested_device: str = "auto") -> tuple[str, str]:
+        normalized = str(requested_device or "auto").strip().lower()
+        if normalized not in {"auto", "cpu", "gpu"}:
+            raise ValueError("Invalid device value. Supported values are: auto, cpu, gpu.")
+        cuda_available = bool(torch is not None and torch.cuda.is_available())
+        if normalized == "gpu":
+            if not cuda_available:
+                raise RuntimeError(
+                    "GPU mode is selected, but no CUDA-compatible GPU is available on this system. "
+                    "Please choose device='auto' or device='cpu' in the website, or install a CUDA-enabled PyTorch setup."
+                )
+            return "cuda", normalized
+        if normalized == "cpu":
+            return "cpu", normalized
+        return ("cuda" if cuda_available else "cpu"), normalized
+
     def health(self) -> dict[str, Any]:
         cuda_available = bool(torch is not None and torch.cuda.is_available())
         gpu_name = None
@@ -728,26 +744,33 @@ class NotebookService:
             self._persist_runtime_table("test_df", test_df)
         return train_df, val_df, test_df, resolved_image_dir
 
-    def build_model_summary(self, num_classes: int = NUM_CLASSES) -> dict[str, Any]:
+    def build_model_summary(self, num_classes: int = NUM_CLASSES, device: str = "auto") -> dict[str, Any]:
         model = build_densenet121(num_classes=num_classes)
-        device = "cuda" if torch and torch.cuda.is_available() else "cpu"
-        model = model.to(device)
+        runtime_device, selected_mode = self._resolve_runtime_device(device)
+        model = model.to(runtime_device)
         self.state.set_runtime("model", model)
+        self.state.set_runtime("active_device", runtime_device)
         return {
             "total_params": sum(p.numel() for p in model.parameters()),
             "trainable_params": sum(p.numel() for p in model.parameters() if p.requires_grad),
             "output_classes": num_classes,
-            "device": device,
+            "device": runtime_device,
+            "selected_mode": selected_mode,
         }
 
-    def train_model_workflow(self, image_dir: str, epochs: int = 5, lr: float = 1e-4, batch_size: int = 32, progress_callback: Callable[[int, str | None], None] | None = None) -> dict[str, Any]:
+    def train_model_workflow(
+        self,
+        image_dir: str,
+        epochs: int = 5,
+        lr: float = 1e-4,
+        batch_size: int = 32,
+        device: str = "auto",
+        progress_callback: Callable[[int, str | None], None] | None = None,
+    ) -> dict[str, Any]:
         _require_torch()
         train_df, val_df, _, resolved_image_dir = self._ensure_splits_for_image_dir(image_dir)
-        use_cuda = torch.cuda.is_available()
-        if not use_cuda:
-            raise RuntimeError(
-                "CUDA GPU is required for Train Model. Install a CUDA-enabled PyTorch build and verify your GPU is available."
-            )
+        runtime_device, selected_mode = self._resolve_runtime_device(device)
+        use_cuda = runtime_device == "cuda"
         train_transform = transforms.Compose([
             transforms.Resize((224, 224)),
             transforms.RandomHorizontalFlip(),
@@ -777,11 +800,11 @@ class NotebookService:
             pin_memory=use_cuda,
         )
         model = self.state.get_runtime("model") or build_densenet121(num_classes=NUM_CLASSES)
-        device = "cuda" if use_cuda else "cpu"
-        model = model.to(device)
+        model = model.to(runtime_device)
         history = train_model(model, train_loader, val_loader, num_epochs=epochs, lr=lr, progress_callback=progress_callback)
         self.state.set_runtime("model", model)
         self.state.set_runtime("history", history)
+        self.state.set_runtime("active_device", runtime_device)
         history_path = self._save_json(history, "training_history.json")
         figure, axes = plt.subplots(1, 2, figsize=(14, 5))
         axes[0].plot(history["train_loss"], label="Train Loss", color="steelblue", marker="o")
@@ -795,19 +818,23 @@ class NotebookService:
         return {
             "history": history,
             "resolved_image_dir": str(resolved_image_dir),
+            "device": runtime_device,
+            "selected_mode": selected_mode,
             "artifacts": [
                 artifact_payload(history_path, "Training History", "json"),
                 artifact_payload(chart_path, "Training Curves", "image"),
             ],
         }
 
-    def run_inference_analysis(self, image_dir: str, threshold: float = 0.5) -> dict[str, Any]:
+    def run_inference_analysis(self, image_dir: str, threshold: float = 0.5, device: str = "auto") -> dict[str, Any]:
         _require_torch()
         _, _, test_df, resolved_image_dir = self._ensure_splits_for_image_dir(image_dir)
         age_lookup = self._load_runtime_json("age_lookup", {})
         model = self.state.get_runtime("model")
         if model is None or test_df is None:
             raise RuntimeError("Model and test split are required before inference.")
+        runtime_device, selected_mode = self._resolve_runtime_device(device)
+        model = model.to(runtime_device)
         transform = transforms.Compose([
             transforms.Resize((224, 224)),
             transforms.ToTensor(),
@@ -819,7 +846,7 @@ class NotebookService:
         misclassified: list[dict[str, Any]] = []
         with torch.no_grad():
             for images, labels, metas in loader:
-                images = images.to(next(model.parameters()).device)
+                images = images.to(runtime_device)
                 outputs = model(images)
                 probs = torch.sigmoid(outputs).cpu().numpy()
                 preds_bin = (probs >= threshold).astype(int)
@@ -846,6 +873,8 @@ class NotebookService:
                         misclassified.append(record)
         self.state.set_runtime("all_results", all_results)
         self.state.set_runtime("misclassified", misclassified)
+        self.state.set_runtime("model", model)
+        self.state.set_runtime("active_device", runtime_device)
         summary = {
             "total": len(all_results),
             "misclassified": len(misclassified),
@@ -866,7 +895,14 @@ class NotebookService:
             ]
         )
         csv_path = self._save_csv(misc_df, "misclassified_records.csv")
-        return {"summary": summary, "resolved_image_dir": str(resolved_image_dir), "preview": misc_df.head(25), "artifacts": [artifact_payload(csv_path, "Misclassified Records", "csv")]}
+        return {
+            "summary": summary,
+            "resolved_image_dir": str(resolved_image_dir),
+            "device": runtime_device,
+            "selected_mode": selected_mode,
+            "preview": misc_df.head(25),
+            "artifacts": [artifact_payload(csv_path, "Misclassified Records", "csv")],
+        }
 
     def generate_structured_error_data(self) -> dict[str, Any]:
         misclassified = self.state.get_runtime("misclassified", [])
