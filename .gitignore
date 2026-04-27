@@ -12,3 +12,6 @@ frontend/.env.production
 frontend/.env.local
 =======
 >>>>>>> b7690b0 (url problem fixed)
+
+# Local Netlify folder
+.netlify
