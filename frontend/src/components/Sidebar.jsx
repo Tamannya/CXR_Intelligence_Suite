@@ -17,8 +17,8 @@ export function Sidebar() {
           <Gauge className="h-6 w-6 text-emerald-300" />
         </div>
         <div>
-          <p className="font-display text-lg font-semibold">CXR Workbench</p>
-          <p className="text-sm text-white/70">Full-stack wrapper for `minorproject2.py`</p>
+          <p className="font-display text-lg font-semibold">Chest X - ray</p>
+          <p className="text-sm text-white/70">A Smart prediction system</p>
         </div>
       </div>
       <nav className="space-y-2">

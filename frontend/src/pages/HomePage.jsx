@@ -4,13 +4,14 @@ export function HomePage({ health, tools }) {
   return (
     <div className="space-y-6">
       <section className="rounded-[2rem] bg-ink px-8 py-10 text-white shadow-panel">
-        <p className="text-sm uppercase tracking-[0.28em] text-emerald-200">Production Wrapper</p>
+        <p className="text-sm uppercase tracking-[0.28em] text-emerald-200"> AI AGENT</p>
         <h1 className="mt-4 max-w-3xl font-display text-4xl font-semibold leading-tight">
-          Full-stack dashboard for every workflow, utility, and advanced callable extracted from `minorproject2.py`.
+         AGENTIC AI HEALTHCARE PREDICTION SYSTEM
         </h1>
         <p className="mt-4 max-w-2xl text-sm leading-7 text-white/75">
-          The backend preserves the notebook’s data prep, DenseNet training, misclassification analysis, structured prompts,
-          bias checks, label inconsistency heuristics, and Grad-CAM visualization paths behind clean Flask APIs.
+          This system turns a chest X-ray AI research workflow into a very simple and user-friendly interface where users can run everything
+          from dataset validation and metadata preparation to DenseNet121 training, inference, misclassification review,
+          bias auditing, label inconsistency checks, and Grad-CAM explainability. This system make advanced healthcare model analysis practical, transparent, and easy to use from one dashboard.
         </p>
       </section>
 
