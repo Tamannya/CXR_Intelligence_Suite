@@ -30,7 +30,7 @@ FUNCTION_REGISTRY: list[dict[str, Any]] = [
         "id": "validate_dataset_match",
         "name": "Validate Dataset Match",
         "section": "main",
-        "description": "Compare CSV image ids with files in the image folder and report overlap, missing ids, and extras before training.",
+        "description": "Compare CSV image ids with files in the image folder and report overlap, missing ids, and extras before inference.",
         "handler": "validate_dataset_match",
         "params": [
             {"name": "csv_file", "type": "file", "required": True, "accept": ".csv"},
@@ -50,34 +50,6 @@ FUNCTION_REGISTRY: list[dict[str, Any]] = [
             {"name": "sample_count", "type": "number", "required": False, "default": 10},
         ],
         "returns": ["image", "table"],
-    },
-    {
-        "id": "build_model_summary",
-        "name": "Build DenseNet121",
-        "section": "main",
-        "description": "Instantiate the DenseNet121 classifier with the notebook's custom classification head.",
-        "handler": "build_model_summary",
-        "params": [
-            {"name": "num_classes", "type": "number", "required": False, "default": 14},
-            {"name": "device", "type": "dropdown", "required": False, "default": "auto", "options": ["auto", "cpu", "gpu"]},
-        ],
-        "returns": ["text"],
-    },
-    {
-        "id": "train_model_workflow",
-        "name": "Train Model",
-        "section": "main",
-        "description": "Run the original DenseNet121 training loop with validation AUC tracking and training-curve artifacts.",
-        "handler": "train_model_workflow",
-        "async": True,
-        "params": [
-            {"name": "image_dir", "type": "directory", "required": True},
-            {"name": "epochs", "type": "number", "required": False, "default": 5},
-            {"name": "lr", "type": "number", "required": False, "default": 0.0001},
-            {"name": "batch_size", "type": "number", "required": False, "default": 32},
-            {"name": "device", "type": "dropdown", "required": False, "default": "auto", "options": ["auto", "cpu", "gpu"]},
-        ],
-        "returns": ["chart", "json"],
     },
     {
         "id": "run_inference_analysis",

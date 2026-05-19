@@ -1,71 +1,113 @@
 import { useEffect, useMemo, useState } from "react";
-import { Route, Routes } from "react-router-dom";
-import { Sidebar } from "./components/Sidebar";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { AboutPage } from "./pages/AboutPage";
 import { HomePage } from "./pages/HomePage";
-import { ToolsPage } from "./pages/ToolsPage";
-import { HistoryPage } from "./pages/HistoryPage";
-import { SettingsPage } from "./pages/SettingsPage";
+import { ModulePage } from "./pages/ModulePage";
+import { ReportsPage } from "./pages/ReportsPage";
 import { api } from "./services/api";
 import { usePolling } from "./hooks/usePolling";
+import { TopNav } from "./components/TopNav";
+import { StatusToast } from "./components/StatusToast";
+import { LoadingOverlay } from "./components/LoadingOverlay";
 
-const TOOL_MEMORY_KEY = "toolFormMemoryV1";
-const UI_MEMORY_KEY = "workflowUiMemoryV1";
+const TOOL_MEMORY_KEY = "toolFormMemoryMedicalV1";
+const UI_MEMORY_KEY = "workflowUiMemoryMedicalV1";
+
+const featurePages = [
+  {
+    id: "disease-prediction",
+    path: "/disease-prediction",
+    title: "Disease Prediction",
+    subtitle: "Prepare the metadata, validate dataset compatibility, preview samples, and run Chest X-ray prediction.",
+    description: "This workspace handles dataset readiness and the core 14-label disease inference pathway using the integrated pretrained model.",
+    toolIds: ["prepare_dataset_metadata", "validate_dataset_match", "sample_image_preview", "run_inference_analysis"],
+    resultHighlights: ["summary", "preview", "artifacts"],
+  },
+  {
+    id: "misclassification-analysis",
+    path: "/misclassification-analysis",
+    title: "Misclassification Analysis",
+    subtitle: "Inspect false positives, false negatives, structured error records, and reasoning traces.",
+    description: "Use this module to convert inference output into structured error narratives and reasoning-ready audit records.",
+    toolIds: ["run_inference_analysis", "generate_structured_error_data", "run_llm_reasoning", "label_inconsistency_detection"],
+    resultHighlights: ["preview", "error_distribution", "summary"],
+  },
+  {
+    id: "bias-analysis",
+    path: "/bias-analysis",
+    title: "Bias Analysis",
+    subtitle: "Evaluate demographic skew and severity distribution across age and gender groups.",
+    description: "This section surfaces possible dataset bias and clinical-risk concentration using the current inference outputs.",
+    toolIds: ["analyze_bias", "run_llm_reasoning", "label_inconsistency_detection"],
+    resultHighlights: ["statistics", "preview", "artifacts"],
+  },
+  {
+    id: "confusion-matrix",
+    path: "/confusion-matrix",
+    title: "Confusion Matrix",
+    subtitle: "Review class confusion, dataset-level error patterns, and pairwise disease overlap.",
+    description: "Explore confusion trends and misclassification structure without changing the model or backend analysis flow.",
+    toolIds: ["dataset_error_pattern_analysis", "run_inference_analysis"],
+    resultHighlights: ["matrix", "top_confused_pairs", "summary"],
+  },
+  {
+    id: "error-taxonomy",
+    path: "/error-taxonomy",
+    title: "Error Taxonomy",
+    subtitle: "Organize model errors by severity, category, and disease-level impact.",
+    description: "A research-grade view of how errors cluster across the structured taxonomy pipeline and downstream summaries.",
+    toolIds: ["build_error_taxonomy", "generate_structured_error_data", "run_llm_reasoning", "gradcam_visualization"],
+    resultHighlights: ["taxonomy", "disease_breakdown", "artifacts"],
+  },
+];
+
+function useLocalStorageState(key, fallback) {
+  const [state, setState] = useState(() => {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch {
+      return fallback;
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem(key, JSON.stringify(state));
+  }, [key, state]);
+
+  return [state, setState];
+}
+
+function useToasts() {
+  const [toasts, setToasts] = useState([]);
+
+  const pushToast = (toast) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setToasts((current) => [...current, { id, ...toast }]);
+    window.setTimeout(() => {
+      setToasts((current) => current.filter((item) => item.id !== id));
+    }, 3200);
+  };
+
+  const dismissToast = (id) => {
+    setToasts((current) => current.filter((item) => item.id !== id));
+  };
+
+  return { toasts, pushToast, dismissToast };
+}
+
 export default function App() {
+  const location = useLocation();
   const [tools, setTools] = useState([]);
   const [health, setHealth] = useState(null);
   const [history, setHistory] = useState([]);
-  const [query, setQuery] = useState("");
-  const [selectedToolBySection, setSelectedToolBySection] = useState(() => {
-    try {
-      const raw = localStorage.getItem(UI_MEMORY_KEY);
-      const parsed = raw ? JSON.parse(raw) : {};
-      return parsed.selectedToolBySection || { main: null, advanced: null };
-    } catch {
-      return { main: null, advanced: null };
-    }
-  });
-  const [latestResult, setLatestResult] = useState(() => {
-    try {
-      const raw = localStorage.getItem(UI_MEMORY_KEY);
-      const parsed = raw ? JSON.parse(raw) : {};
-      return parsed.latestResult || null;
-    } catch {
-      return null;
-    }
-  });
   const [loading, setLoading] = useState(false);
-  const [activeJob, setActiveJob] = useState(() => {
-    try {
-      const raw = localStorage.getItem(UI_MEMORY_KEY);
-      const parsed = raw ? JSON.parse(raw) : {};
-      return parsed.activeJob || null;
-    } catch {
-      return null;
-    }
-  });
-  const [toolFormMemory, setToolFormMemory] = useState(() => {
-    try {
-      const raw = localStorage.getItem(TOOL_MEMORY_KEY);
-      return raw ? JSON.parse(raw) : {};
-    } catch {
-      return {};
-    }
-  });
-
-  useEffect(() => {
-    localStorage.setItem(TOOL_MEMORY_KEY, JSON.stringify(toolFormMemory));
-  }, [toolFormMemory]);
-
-  useEffect(() => {
-    localStorage.setItem(
-      UI_MEMORY_KEY,
-      JSON.stringify({
-        selectedToolBySection,
-        latestResult,
-        activeJob,
-      }),
-    );
-  }, [selectedToolBySection, latestResult, activeJob]);
+  const [activeJob, setActiveJob] = useLocalStorageState(`${UI_MEMORY_KEY}-job`, null);
+  const [latestResultByPage, setLatestResultByPage] = useLocalStorageState(`${UI_MEMORY_KEY}-results`, {});
+  const [selectedToolByPage, setSelectedToolByPage] = useLocalStorageState(`${UI_MEMORY_KEY}-selectedTools`, {});
+  const [toolFormMemory, setToolFormMemory] = useLocalStorageState(TOOL_MEMORY_KEY, {});
+  const [searchByPage, setSearchByPage] = useLocalStorageState(`${UI_MEMORY_KEY}-search`, {});
+  const { toasts, pushToast, dismissToast } = useToasts();
 
   const loadDashboard = async () => {
     const [toolsResponse, healthResponse, historyResponse] = await Promise.all([
@@ -76,20 +118,10 @@ export default function App() {
     setTools(toolsResponse.tools);
     setHealth(healthResponse);
     setHistory(historyResponse.items || []);
-    setSelectedToolBySection((current) => {
-      const mainToolsList = toolsResponse.tools.filter((tool) => tool.section === "main");
-      const advancedToolsList = toolsResponse.tools.filter((tool) => tool.section === "advanced");
-      const currentMainValid = mainToolsList.some((tool) => tool.id === current.main);
-      const currentAdvancedValid = advancedToolsList.some((tool) => tool.id === current.advanced);
-      return {
-        main: currentMainValid ? current.main : mainToolsList[0]?.id || null,
-        advanced: currentAdvancedValid ? current.advanced : advancedToolsList[0]?.id || null,
-      };
-    });
   };
 
   useEffect(() => {
-    loadDashboard().catch((error) => setLatestResult({ summary: { error: error.message } }));
+    loadDashboard().catch((error) => pushToast({ tone: "error", title: "Connection issue", description: error.message }));
   }, []);
 
   usePolling(
@@ -99,59 +131,59 @@ export default function App() {
         const job = await api.getJob(activeJob.id);
         setActiveJob(job);
         if (job.status === "completed") {
-          setLatestResult(job.result);
+          setLatestResultByPage((current) => ({ ...current, [job.pageId || activeJob.pageId]: job.result }));
           setLoading(false);
           setActiveJob(null);
+          pushToast({ tone: "success", title: "Analysis complete", description: `${job.name || "Background job"} finished successfully.` });
           loadDashboard().catch(() => {});
         }
         if (job.status === "failed") {
-          setLatestResult({ summary: { error: job.error || "Job failed" } });
           setLoading(false);
           setActiveJob(null);
+          pushToast({ tone: "error", title: "Job failed", description: job.error || "Background analysis failed." });
         }
       } catch (error) {
-        setLatestResult({ summary: { error: error.message || "Failed to fetch job status" } });
         setLoading(false);
         setActiveJob(null);
+        pushToast({ tone: "error", title: "Status check failed", description: error.message || "Failed to fetch job status" });
       }
     },
     Boolean(activeJob?.id),
     3000,
   );
 
-  const mainTools = useMemo(
-    () => tools.filter((tool) => tool.section === "main" && `${tool.name} ${tool.description}`.toLowerCase().includes(query.toLowerCase())),
-    [tools, query],
-  );
+  const toolsById = useMemo(() => Object.fromEntries(tools.map((tool) => [tool.id, tool])), [tools]);
 
-  const advancedTools = useMemo(
-    () => tools.filter((tool) => tool.section === "advanced" && `${tool.name} ${tool.description}`.toLowerCase().includes(query.toLowerCase())),
-    [tools, query],
-  );
+  const pageToolMap = useMemo(() => {
+    const map = {};
+    featurePages.forEach((page) => {
+      map[page.id] = page.toolIds.map((toolId) => toolsById[toolId]).filter(Boolean);
+    });
+    return map;
+  }, [toolsById]);
 
-  const selectedMainTool = useMemo(
-    () => mainTools.find((tool) => tool.id === selectedToolBySection.main) || mainTools[0] || null,
-    [mainTools, selectedToolBySection.main],
-  );
-  const selectedAdvancedTool = useMemo(
-    () => advancedTools.find((tool) => tool.id === selectedToolBySection.advanced) || advancedTools[0] || null,
-    [advancedTools, selectedToolBySection.advanced],
-  );
+  const advancedTools = useMemo(() => tools.filter((tool) => tool.section === "advanced"), [tools]);
 
-  const execute = async (tool, values) => {
+  const getSelectedTool = (pageId, availableTools) => {
+    const savedId = selectedToolByPage[pageId];
+    return availableTools.find((tool) => tool.id === savedId) || availableTools[0] || null;
+  };
+
+  const execute = async (pageId, tool, values) => {
     if (!tool?.id) return;
     setLoading(true);
     try {
       const response = await api.executeTool(tool.id, values);
       if (response.job_id) {
-        setActiveJob({ id: response.job_id, status: response.status, progress: 0 });
+        setActiveJob({ id: response.job_id, status: response.status, progress: 0, pageId });
+        pushToast({ tone: "info", title: "Analysis queued", description: `${tool.name} is running in the background.` });
         return;
       }
-      setLatestResult(response.result);
+      setLatestResultByPage((current) => ({ ...current, [pageId]: response.result }));
+      pushToast({ tone: "success", title: "Analysis updated", description: `${tool.name} completed successfully.` });
       await loadDashboard();
     } catch (error) {
-      // Keep result panel informative even when request fails.
-      setLatestResult({ summary: { error: error.message || "Tool execution failed" } });
+      pushToast({ tone: "error", title: "Execution failed", description: error.message || "Tool execution failed" });
       throw error;
     } finally {
       setLoading(false);
@@ -160,69 +192,74 @@ export default function App() {
 
   const updateToolFormMemory = (toolId, values) => {
     if (!toolId) return;
-    // Persist only serializable values. File objects stay in-memory in ToolForm state.
     const serializable = Object.fromEntries(
-      Object.entries(values || {}).filter(([, value]) => !(value instanceof File)),
+      Object.entries(values || {}).filter(([, value]) => {
+        if (value instanceof File) return false;
+        if (Array.isArray(value) && value.some((item) => item instanceof File)) return false;
+        return true;
+      }),
     );
     setToolFormMemory((current) => ({ ...current, [toolId]: serializable }));
   };
 
-  const selectTool = (section, tool) => {
-    if (!tool?.id) return;
-    setSelectedToolBySection((current) => ({ ...current, [section]: tool.id }));
-  };
+  const layoutNav = [
+    { to: "/", label: "Home" },
+    { to: "/disease-prediction", label: "Disease Prediction" },
+    { to: "/misclassification-analysis", label: "Misclassification Analysis" },
+    { to: "/bias-analysis", label: "Bias Analysis" },
+    { to: "/confusion-matrix", label: "Confusion Matrix" },
+    { to: "/error-taxonomy", label: "Error Taxonomy" },
+    { to: "/reports-exports", label: "Reports & Exports" },
+    { to: "/about", label: "About" },
+  ];
 
   return (
-    <div className="min-h-screen px-4 py-4 lg:px-6">
-      <div className="mx-auto grid max-w-[1600px] gap-6 lg:grid-cols-[280px_1fr]">
-        <Sidebar />
-        <main className="rounded-[2rem] bg-white/50 p-6 backdrop-blur-sm lg:p-8">
-          <Routes>
-            <Route path="/" element={<HomePage health={health} tools={tools} />} />
-            <Route
-              path="/tools"
-              element={
-                <ToolsPage
-                  title="Main Tools"
-                  tools={mainTools}
-                  query={query}
-                  setQuery={setQuery}
-                  selectedTool={selectedMainTool}
-                  setSelectedTool={(tool) => selectTool("main", tool)}
-                  onSubmit={(values) => execute(selectedMainTool, values)}
-                  rememberedValues={toolFormMemory[selectedMainTool?.id] || {}}
-                  onValuesChange={(values) => updateToolFormMemory(selectedMainTool?.id, values)}
-                  loading={loading}
-                  latestResult={latestResult}
-                  activeJob={activeJob}
-                />
-              }
-            />
-            <Route
-              path="/advanced"
-              element={
-                <ToolsPage
-                  title="Advanced Tools"
-                  tools={advancedTools}
-                  query={query}
-                  setQuery={setQuery}
-                  selectedTool={selectedAdvancedTool}
-                  setSelectedTool={(tool) => selectTool("advanced", tool)}
-                  onSubmit={(values) => execute(selectedAdvancedTool, values)}
-                  rememberedValues={toolFormMemory[selectedAdvancedTool?.id] || {}}
-                  onValuesChange={(values) => updateToolFormMemory(selectedAdvancedTool?.id, values)}
-                  loading={loading}
-                  latestResult={latestResult}
-                  activeJob={activeJob}
-                />
-              }
-            />
-            <Route path="/history" element={<HistoryPage history={history} />} />
-            <Route path="/settings" element={<SettingsPage health={health} />} />
-          </Routes>
-        </main>
-      </div>
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(96,165,250,0.18),_transparent_22%),linear-gradient(160deg,_#04132d_0%,_#0b2550_45%,_#0f3c78_100%)] text-white">
+      {/* Background image will be added later */}
+      <TopNav items={layoutNav} activePath={location.pathname} />
+      <LoadingOverlay show={loading} activeJob={activeJob} />
+      <StatusToast toasts={toasts} onDismiss={dismissToast} />
+
+      <main className="mx-auto flex min-h-[calc(100vh-80px)] max-w-[1550px] flex-col px-4 pb-10 pt-8 lg:px-8">
+        <Routes>
+          <Route path="/" element={<HomePage health={health} tools={tools} />} />
+          {featurePages.map((page) => {
+            const availableTools = pageToolMap[page.id] || [];
+            const selectedTool = getSelectedTool(page.id, availableTools);
+            const searchValue = searchByPage[page.id] || "";
+            const filteredTools = availableTools.filter((tool) =>
+              `${tool.name} ${tool.description}`.toLowerCase().includes(searchValue.toLowerCase()),
+            );
+            const activeTool = filteredTools.find((tool) => tool.id === selectedTool?.id) || filteredTools[0] || selectedTool;
+
+            return (
+              <Route
+                key={page.path}
+                path={page.path}
+                element={
+                  <ModulePage
+                    page={page}
+                    tools={filteredTools}
+                    selectedTool={activeTool}
+                    setSelectedTool={(tool) => setSelectedToolByPage((current) => ({ ...current, [page.id]: tool.id }))}
+                    searchValue={searchValue}
+                    setSearchValue={(value) => setSearchByPage((current) => ({ ...current, [page.id]: value }))}
+                    rememberedValues={toolFormMemory[activeTool?.id] || {}}
+                    onValuesChange={(values) => updateToolFormMemory(activeTool?.id, values)}
+                    onSubmit={(values) => execute(page.id, activeTool, values)}
+                    result={latestResultByPage[page.id] || null}
+                    loading={loading}
+                    activeJob={activeJob?.pageId === page.id ? activeJob : null}
+                  />
+                }
+              />
+            );
+          })}
+          <Route path="/reports-exports" element={<ReportsPage history={history} latestResults={latestResultByPage} />} />
+          <Route path="/about" element={<AboutPage health={health} advancedTools={advancedTools} />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </main>
     </div>
   );
 }
-

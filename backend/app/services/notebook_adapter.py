@@ -108,6 +108,7 @@ REPORT_TEMPLATES = {
     ],
 }
 LOCATIONS = ["right upper", "right lower", "left upper", "left lower", "bilateral"]
+DEFAULT_PRETRAINED_MODEL_PATH = Path(r"C:\Users\LUCIFER\Downloads\full_cxr_model.pth")
 
 
 def _require_torch() -> None:
@@ -241,6 +242,22 @@ def build_densenet121(num_classes: int = 14):
         nn.Linear(512, num_classes),
     )
     return model
+
+
+def extract_state_dict(checkpoint: Any) -> dict[str, Any]:
+    if isinstance(checkpoint, dict):
+        for key in ("state_dict", "model_state_dict", "model", "weights"):
+            value = checkpoint.get(key)
+            if isinstance(value, dict):
+                checkpoint = value
+                break
+    if not isinstance(checkpoint, dict):
+        raise RuntimeError("Unsupported model checkpoint format. Expected a PyTorch state_dict or checkpoint dict.")
+    cleaned_state = {}
+    for key, value in checkpoint.items():
+        normalized_key = key[7:] if isinstance(key, str) and key.startswith("module.") else key
+        cleaned_state[normalized_key] = value
+    return cleaned_state
 
 
 def train_model(model, train_loader, val_loader, num_epochs: int = 5, lr: float = 1e-4, progress_callback: Callable[[int, str | None], None] | None = None):
@@ -744,19 +761,61 @@ class NotebookService:
             self._persist_runtime_table("test_df", test_df)
         return train_df, val_df, test_df, resolved_image_dir
 
-    def build_model_summary(self, num_classes: int = NUM_CLASSES, device: str = "auto") -> dict[str, Any]:
+    def build_model_summary(
+        self,
+        num_classes: int = NUM_CLASSES,
+        device: str = "auto",
+        model_file: str | None = None,
+    ) -> dict[str, Any]:
+        _require_torch()
         model = build_densenet121(num_classes=num_classes)
         runtime_device, selected_mode = self._resolve_runtime_device(device)
         model = model.to(runtime_device)
+        checkpoint_path = Path(model_file) if model_file else DEFAULT_PRETRAINED_MODEL_PATH
+        if not checkpoint_path.exists():
+            raise RuntimeError(
+                f"Pretrained model file not found: {checkpoint_path}. "
+                "Upload a .pth file or place the model at the default configured path."
+            )
+        checkpoint = torch.load(checkpoint_path, map_location=runtime_device)
+        state_dict = extract_state_dict(checkpoint)
+        incompatible = model.load_state_dict(state_dict, strict=False)
+        model.eval()
         self.state.set_runtime("model", model)
         self.state.set_runtime("active_device", runtime_device)
+        self.state.set_runtime("loaded_model_path", str(checkpoint_path))
         return {
             "total_params": sum(p.numel() for p in model.parameters()),
             "trainable_params": sum(p.numel() for p in model.parameters() if p.requires_grad),
             "output_classes": num_classes,
             "device": runtime_device,
             "selected_mode": selected_mode,
+            "loaded_model_path": str(checkpoint_path),
+            "missing_keys": list(getattr(incompatible, "missing_keys", [])),
+            "unexpected_keys": list(getattr(incompatible, "unexpected_keys", [])),
+            "mode": "evaluation",
         }
+
+    def _ensure_pretrained_model_loaded(
+        self,
+        num_classes: int = NUM_CLASSES,
+        device: str = "auto",
+    ):
+        model = self.state.get_runtime("model")
+        runtime_device, _ = self._resolve_runtime_device(device)
+        loaded_model_path = self.state.get_runtime("loaded_model_path")
+        if model is not None and loaded_model_path:
+            model = model.to(runtime_device)
+            model.eval()
+            self.state.set_runtime("model", model)
+            self.state.set_runtime("active_device", runtime_device)
+            return model, runtime_device, loaded_model_path
+
+        result = self.build_model_summary(num_classes=num_classes, device=device, model_file=None)
+        model = self.state.get_runtime("model")
+        if model is None:
+            raise RuntimeError("Failed to load the integrated pretrained model.")
+        return model, runtime_device, result["loaded_model_path"]
 
     def train_model_workflow(
         self,
@@ -830,11 +889,10 @@ class NotebookService:
         _require_torch()
         _, _, test_df, resolved_image_dir = self._ensure_splits_for_image_dir(image_dir)
         age_lookup = self._load_runtime_json("age_lookup", {})
-        model = self.state.get_runtime("model")
-        if model is None or test_df is None:
-            raise RuntimeError("Model and test split are required before inference.")
-        runtime_device, selected_mode = self._resolve_runtime_device(device)
-        model = model.to(runtime_device)
+        if test_df is None:
+            raise RuntimeError("Test split is required before inference.")
+        model, runtime_device, loaded_model_path = self._ensure_pretrained_model_loaded(num_classes=NUM_CLASSES, device=device)
+        _, selected_mode = self._resolve_runtime_device(device)
         transform = transforms.Compose([
             transforms.Resize((224, 224)),
             transforms.ToTensor(),
@@ -879,6 +937,7 @@ class NotebookService:
             "total": len(all_results),
             "misclassified": len(misclassified),
             "accuracy": round(((len(all_results) - len(misclassified)) / max(len(all_results), 1)) * 100, 2),
+            "loaded_model_path": loaded_model_path,
         }
         misc_df = pd.DataFrame(
             [
@@ -1178,9 +1237,9 @@ class NotebookService:
     def gradcam_visualization(self, image_dir: str) -> dict[str, Any]:
         _require_torch()
         llm_df = self.state.get_runtime("llm_df")
-        model = self.state.get_runtime("model")
-        if llm_df is None or llm_df.empty or model is None:
-            raise RuntimeError("Run model training/inference and LLM reasoning before Grad-CAM.")
+        if llm_df is None or llm_df.empty:
+            raise RuntimeError("Run inference and LLM reasoning before Grad-CAM.")
+        model, _, loaded_model_path = self._ensure_pretrained_model_loaded(num_classes=NUM_CLASSES, device="auto")
         resolved_image_dir = resolve_image_dir(image_dir, sample_image_id=str(llm_df.iloc[0]["image_id"]) if not llm_df.empty else None)
         transform = transforms.Compose([
             transforms.Resize((224, 224)),
@@ -1220,7 +1279,11 @@ class NotebookService:
             for row in range(3):
                 axes[row][col].axis("off")
         chart_path = self._save_plot(fig, "gradcam_visualizations.png")
-        return {"resolved_image_dir": str(resolved_image_dir), "artifacts": [artifact_payload(chart_path, "Grad-CAM Visualizations", "image")]}
+        return {
+            "resolved_image_dir": str(resolved_image_dir),
+            "loaded_model_path": loaded_model_path,
+            "artifacts": [artifact_payload(chart_path, "Grad-CAM Visualizations", "image")],
+        }
 
     def sample_image_preview(self, image_dir: str, sample_count: int = 10) -> dict[str, Any]:
         train_df, _, _, resolved_image_dir = self._ensure_splits_for_image_dir(image_dir)
