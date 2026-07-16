@@ -3,24 +3,34 @@ services:
     name: minorproject2-backend
     runtime: python
     plan: free
-    rootDir: .
+    rootDir: backend
+
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --chdir backend --bind 0.0.0.0:$PORT run:app
+
+    startCommand: gunicorn --bind 0.0.0.0:$PORT run:app
+
     healthCheckPath: /api/health
+
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
+
   - type: web
     name: minorproject2-frontend
     runtime: static
     plan: free
+
     rootDir: frontend
+
     buildCommand: npm install && npm run build
+
     staticPublishPath: dist
+
     routes:
       - type: rewrite
         source: /*
         destination: /index.html
+
     envVars:
       - key: VITE_API_BASE_URL
         sync: false
