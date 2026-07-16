@@ -1,265 +1,105 @@
-import { useEffect, useMemo, useState } from "react";
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
-import { AboutPage } from "./pages/AboutPage";
-import { HomePage } from "./pages/HomePage";
-import { ModulePage } from "./pages/ModulePage";
-import { ReportsPage } from "./pages/ReportsPage";
-import { api } from "./services/api";
-import { usePolling } from "./hooks/usePolling";
+import { useState, useEffect } from "react";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { TopNav } from "./components/TopNav";
-import { StatusToast } from "./components/StatusToast";
-import { LoadingOverlay } from "./components/LoadingOverlay";
-
-const TOOL_MEMORY_KEY = "toolFormMemoryMedicalV1";
-const UI_MEMORY_KEY = "workflowUiMemoryMedicalV1";
-
-const featurePages = [
-  {
-    id: "disease-prediction",
-    path: "/disease-prediction",
-    title: "Disease Prediction",
-    subtitle: "Prepare the metadata, validate dataset compatibility, preview samples, and run Chest X-ray prediction.",
-    description: "This workspace handles dataset readiness and the core 14-label disease inference pathway using the integrated pretrained model.",
-    toolIds: ["prepare_dataset_metadata", "validate_dataset_match", "sample_image_preview", "run_inference_analysis"],
-    resultHighlights: ["summary", "preview", "artifacts"],
-  },
-  {
-    id: "misclassification-analysis",
-    path: "/misclassification-analysis",
-    title: "Misclassification Analysis",
-    subtitle: "Inspect false positives, false negatives, structured error records, and reasoning traces.",
-    description: "Use this module to convert inference output into structured error narratives and reasoning-ready audit records.",
-    toolIds: ["run_inference_analysis", "generate_structured_error_data", "run_llm_reasoning", "label_inconsistency_detection"],
-    resultHighlights: ["preview", "error_distribution", "summary"],
-  },
-  {
-    id: "bias-analysis",
-    path: "/bias-analysis",
-    title: "Bias Analysis",
-    subtitle: "Evaluate demographic skew and severity distribution across age and gender groups.",
-    description: "This section surfaces possible dataset bias and clinical-risk concentration using the current inference outputs.",
-    toolIds: ["analyze_bias", "run_llm_reasoning", "label_inconsistency_detection"],
-    resultHighlights: ["statistics", "preview", "artifacts"],
-  },
-  {
-    id: "confusion-matrix",
-    path: "/confusion-matrix",
-    title: "Confusion Matrix",
-    subtitle: "Review class confusion, dataset-level error patterns, and pairwise disease overlap.",
-    description: "Explore confusion trends and misclassification structure without changing the model or backend analysis flow.",
-    toolIds: ["dataset_error_pattern_analysis", "run_inference_analysis"],
-    resultHighlights: ["matrix", "top_confused_pairs", "summary"],
-  },
-  {
-    id: "error-taxonomy",
-    path: "/error-taxonomy",
-    title: "Error Taxonomy",
-    subtitle: "Organize model errors by severity, category, and disease-level impact.",
-    description: "A research-grade view of how errors cluster across the structured taxonomy pipeline and downstream summaries.",
-    toolIds: ["build_error_taxonomy", "generate_structured_error_data", "run_llm_reasoning", "gradcam_visualization"],
-    resultHighlights: ["taxonomy", "disease_breakdown", "artifacts"],
-  },
-];
-
-function useLocalStorageState(key, fallback) {
-  const [state, setState] = useState(() => {
-    try {
-      const raw = localStorage.getItem(key);
-      return raw ? JSON.parse(raw) : fallback;
-    } catch {
-      return fallback;
-    }
-  });
-
-  useEffect(() => {
-    localStorage.setItem(key, JSON.stringify(state));
-  }, [key, state]);
-
-  return [state, setState];
-}
-
-function useToasts() {
-  const [toasts, setToasts] = useState([]);
-
-  const pushToast = (toast) => {
-    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    setToasts((current) => [...current, { id, ...toast }]);
-    window.setTimeout(() => {
-      setToasts((current) => current.filter((item) => item.id !== id));
-    }, 3200);
-  };
-
-  const dismissToast = (id) => {
-    setToasts((current) => current.filter((item) => item.id !== id));
-  };
-
-  return { toasts, pushToast, dismissToast };
-}
+import { Home } from "./pages/Home";
+import { Results } from "./pages/Results";
+import { Taxonomy } from "./pages/Taxonomy";
+import { Fairness } from "./pages/Fairness";
+import { Report } from "./pages/Report";
+import { AnalysisPage } from "./pages/AnalysisPage";
+import { LoginPage } from "./pages/LoginPage";
+import { SignupPage } from "./pages/SignupPage";
+import { HistoryPage } from "./pages/HistoryPage";
+import { EditProfile } from "./pages/EditProfile";
 
 export default function App() {
   const location = useLocation();
-  const [tools, setTools] = useState([]);
-  const [health, setHealth] = useState(null);
-  const [history, setHistory] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [activeJob, setActiveJob] = useLocalStorageState(`${UI_MEMORY_KEY}-job`, null);
-  const [latestResultByPage, setLatestResultByPage] = useLocalStorageState(`${UI_MEMORY_KEY}-results`, {});
-  const [selectedToolByPage, setSelectedToolByPage] = useLocalStorageState(`${UI_MEMORY_KEY}-selectedTools`, {});
-  const [toolFormMemory, setToolFormMemory] = useLocalStorageState(TOOL_MEMORY_KEY, {});
-  const [searchByPage, setSearchByPage] = useLocalStorageState(`${UI_MEMORY_KEY}-search`, {});
-  const { toasts, pushToast, dismissToast } = useToasts();
+  const navigate = useNavigate();
 
-  const loadDashboard = async () => {
-    const [toolsResponse, healthResponse, historyResponse] = await Promise.all([
-      api.getTools(),
-      api.getHealth(),
-      api.getHistory(),
-    ]);
-    setTools(toolsResponse.tools);
-    setHealth(healthResponse);
-    setHistory(historyResponse.items || []);
-  };
-
+  // Dynamically set tab favicon to stethoscope SVG
   useEffect(() => {
-    loadDashboard().catch((error) => pushToast({ tone: "error", title: "Connection issue", description: error.message }));
+    const link = document.querySelector("link[rel~='icon']") || document.createElement("link");
+    link.type = "image/svg+xml";
+    link.rel = "icon";
+    link.href =
+      "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%232471a3%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><path d=%22M4.8 2.3A.3.3 0 1 0 5 2.5V3a7 7 0 0 0 14 0v-.5a.3.3 0 1 0 .2-.2%22/><path d=%22M12 10v12%22/><path d=%22M12 22a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z%22/><path d=%22M9 14h6%22/></svg>";
+    document.getElementsByTagName("head")[0].appendChild(link);
   }, []);
 
-  usePolling(
-    async () => {
-      try {
-        if (!activeJob?.id) return;
-        const job = await api.getJob(activeJob.id);
-        setActiveJob(job);
-        if (job.status === "completed") {
-          setLatestResultByPage((current) => ({ ...current, [job.pageId || activeJob.pageId]: job.result }));
-          setLoading(false);
-          setActiveJob(null);
-          pushToast({ tone: "success", title: "Analysis complete", description: `${job.name || "Background job"} finished successfully.` });
-          loadDashboard().catch(() => {});
-        }
-        if (job.status === "failed") {
-          setLoading(false);
-          setActiveJob(null);
-          pushToast({ tone: "error", title: "Job failed", description: job.error || "Background analysis failed." });
-        }
-      } catch (error) {
-        setLoading(false);
-        setActiveJob(null);
-        pushToast({ tone: "error", title: "Status check failed", description: error.message || "Failed to fetch job status" });
-      }
-    },
-    Boolean(activeJob?.id),
-    3000,
-  );
-
-  const toolsById = useMemo(() => Object.fromEntries(tools.map((tool) => [tool.id, tool])), [tools]);
-
-  const pageToolMap = useMemo(() => {
-    const map = {};
-    featurePages.forEach((page) => {
-      map[page.id] = page.toolIds.map((toolId) => toolsById[toolId]).filter(Boolean);
-    });
-    return map;
-  }, [toolsById]);
-
-  const advancedTools = useMemo(() => tools.filter((tool) => tool.section === "advanced"), [tools]);
-
-  const getSelectedTool = (pageId, availableTools) => {
-    const savedId = selectedToolByPage[pageId];
-    return availableTools.find((tool) => tool.id === savedId) || availableTools[0] || null;
-  };
-
-  const execute = async (pageId, tool, values) => {
-    if (!tool?.id) return;
-    setLoading(true);
+  const [user, setUser] = useState(() => {
     try {
-      const response = await api.executeTool(tool.id, values);
-      if (response.job_id) {
-        setActiveJob({ id: response.job_id, status: response.status, progress: 0, pageId });
-        pushToast({ tone: "info", title: "Analysis queued", description: `${tool.name} is running in the background.` });
-        return;
-      }
-      setLatestResultByPage((current) => ({ ...current, [pageId]: response.result }));
-      pushToast({ tone: "success", title: "Analysis updated", description: `${tool.name} completed successfully.` });
-      await loadDashboard();
-    } catch (error) {
-      pushToast({ tone: "error", title: "Execution failed", description: error.message || "Tool execution failed" });
-      throw error;
-    } finally {
-      setLoading(false);
+      const saved = localStorage.getItem("cxr_user");
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
     }
+  });
+
+  const handleLogin = (authData) => {
+    setUser(authData.user);
+    localStorage.setItem("cxr_user", JSON.stringify(authData.user));
+    localStorage.setItem("cxr_token", authData.token);
   };
 
-  const updateToolFormMemory = (toolId, values) => {
-    if (!toolId) return;
-    const serializable = Object.fromEntries(
-      Object.entries(values || {}).filter(([, value]) => {
-        if (value instanceof File) return false;
-        if (Array.isArray(value) && value.some((item) => item instanceof File)) return false;
-        return true;
-      }),
-    );
-    setToolFormMemory((current) => ({ ...current, [toolId]: serializable }));
+  const handleLogout = () => {
+    setUser(null);
+    localStorage.removeItem("cxr_user");
+    localStorage.removeItem("cxr_token");
+    navigate("/");
+  };
+
+  const handleProfileUpdate = (updatedUser) => {
+    setUser(updatedUser);
+    localStorage.setItem("cxr_user", JSON.stringify(updatedUser));
+  };
+
+  const [activeAnalysis, setActiveAnalysis] = useState(() => {
+    try {
+      const saved = localStorage.getItem("cxr_active_analysis");
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const handleAnalysisComplete = (data) => {
+    setActiveAnalysis(data);
+    if (data) {
+      localStorage.setItem("cxr_active_analysis", JSON.stringify(data));
+    } else {
+      localStorage.removeItem("cxr_active_analysis");
+    }
+    navigate("/results");
   };
 
   const layoutNav = [
     { to: "/", label: "Home" },
-    { to: "/disease-prediction", label: "Disease Prediction" },
-    { to: "/misclassification-analysis", label: "Misclassification Analysis" },
-    { to: "/bias-analysis", label: "Bias Analysis" },
-    { to: "/confusion-matrix", label: "Confusion Matrix" },
-    { to: "/error-taxonomy", label: "Error Taxonomy" },
-    { to: "/reports-exports", label: "Reports & Exports" },
-    { to: "/about", label: "About" },
+    { to: "/history", label: "History" },
+    { to: "/taxonomy", label: "Taxonomy" },
+    { to: "/fairness", label: "Performance Audit" },
   ];
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(96,165,250,0.18),_transparent_22%),linear-gradient(160deg,_#04132d_0%,_#0b2550_45%,_#0f3c78_100%)] text-white">
-      {/* Background image will be added later */}
-      <TopNav items={layoutNav} activePath={location.pathname} />
-      <LoadingOverlay show={loading} activeJob={activeJob} />
-      <StatusToast toasts={toasts} onDismiss={dismissToast} />
-
-      <main className="mx-auto flex min-h-[calc(100vh-80px)] max-w-[1550px] flex-col px-4 pb-10 pt-8 lg:px-8">
+    <div className="min-h-screen bg-[#0F172A] text-[#F8FAFC] pt-[56px] flex flex-col font-sans">
+      <TopNav items={layoutNav} activePath={location.pathname} user={user} onLogout={handleLogout} />
+      <main className="flex-1 flex flex-col">
         <Routes>
-          <Route path="/" element={<HomePage health={health} tools={tools} />} />
-          {featurePages.map((page) => {
-            const availableTools = pageToolMap[page.id] || [];
-            const selectedTool = getSelectedTool(page.id, availableTools);
-            const searchValue = searchByPage[page.id] || "";
-            const filteredTools = availableTools.filter((tool) =>
-              `${tool.name} ${tool.description}`.toLowerCase().includes(searchValue.toLowerCase()),
-            );
-            const activeTool = filteredTools.find((tool) => tool.id === selectedTool?.id) || filteredTools[0] || selectedTool;
-
-            return (
-              <Route
-                key={page.path}
-                path={page.path}
-                element={
-                  <ModulePage
-                    page={page}
-                    tools={filteredTools}
-                    selectedTool={activeTool}
-                    setSelectedTool={(tool) => setSelectedToolByPage((current) => ({ ...current, [page.id]: tool.id }))}
-                    searchValue={searchValue}
-                    setSearchValue={(value) => setSearchByPage((current) => ({ ...current, [page.id]: value }))}
-                    rememberedValues={toolFormMemory[activeTool?.id] || {}}
-                    onValuesChange={(values) => updateToolFormMemory(activeTool?.id, values)}
-                    onSubmit={(values) => execute(page.id, activeTool, values)}
-                    result={latestResultByPage[page.id] || null}
-                    loading={loading}
-                    activeJob={activeJob?.pageId === page.id ? activeJob : null}
-                  />
-                }
-              />
-            );
-          })}
-          <Route path="/reports-exports" element={<ReportsPage history={history} latestResults={latestResultByPage} />} />
-          <Route path="/about" element={<AboutPage health={health} advancedTools={advancedTools} />} />
+          <Route path="/" element={<Home />} />
+          <Route path="/login" element={<LoginPage onLogin={handleLogin} />} />
+          <Route path="/signup" element={<SignupPage onLogin={handleLogin} />} />
+          <Route path="/analysis" element={<AnalysisPage />} />
+          <Route path="/results" element={<Results analysis={activeAnalysis} />} />
+          <Route path="/taxonomy" element={<Taxonomy />} />
+          <Route path="/fairness" element={<Fairness />} />
+          <Route path="/report" element={<Report />} />
+          <Route path="/history" element={<HistoryPage user={user} />} />
+          <Route path="/profile" element={<EditProfile user={user} onProfileUpdate={handleProfileUpdate} />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
+      <footer className="py-6 border-t border-white/5 bg-[#0F172A] text-center text-[12px] text-slate-500 font-medium select-none">
+        &copy; 2026 ImagePulse. For research and educational use only.
+      </footer>
     </div>
   );
 }
